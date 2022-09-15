@@ -2,8 +2,10 @@
 #include <cassert>
 #include "FreeImage.h"
 
+#pragma comment(linker, "/entry:WinMainCRTStartup /subsystem:console")
+
 // #pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "FreeImage.lib")
+// #pragma comment(lib, "FreeImage.lib")
 
 #if not defined _DEBUG
 #define MUST(Expression) (      (         (Expression)))
@@ -11,6 +13,14 @@
 #define MUST(Expression) (assert(SUCCEEDED(Expression)))
 #endif
 
+namespace Input
+{
+    void Procedure(HWND const, UINT const, WPARAM const, LPARAM const);
+    namespace Get
+    {
+        bool Down(size_t);
+    }
+}
 
 namespace Pipeline
 {
@@ -27,6 +37,17 @@ namespace Pipeline
         namespace Buffer
         {
             ID3D11Buffer* Vertex;
+            ID3D11Buffer* Constant[3];
+
+            template<typename Data>
+            void Update(ID3D11Buffer* buffer, Data const& data)
+            {
+                D3D11_MAPPED_SUBRESOURCE subResource = D3D11_MAPPED_SUBRESOURCE();
+
+                MUST(DeviceContext->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &subResource));
+                memcpy_s(subResource.pData, subResource.RowPitch, data, sizeof(data));
+                DeviceContext->Unmap(buffer, 0);
+            }
         }
     }
 
@@ -34,6 +55,15 @@ namespace Pipeline
     {
         switch (uMessage)
         {
+        case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: case WM_MOUSEMOVE:
+        case WM_SYSKEYDOWN: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+        case WM_SYSKEYUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+        case WM_KEYUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+        case WM_KEYDOWN: case WM_XBUTTONDOWN: case WM_XBUTTONUP:
+        {
+            Input::Procedure(hWindow, uMessage, wParam, lParam);
+            return 0;
+        }
         case WM_CREATE:
         {
             {
@@ -61,26 +91,21 @@ namespace Pipeline
                     &DeviceContext
                 ));
             }
-
             {
-                // IA (Input Assembler) Stage
-                // 가장 기본적인 데이터를 입력하는 단계입니다.
-                // 그래픽 연산의 가장 기초적인 데이터는 Vertex(정점)을 의미합니다.
-
                 float const Coordinates[4][2]
                 {
-                  { -0.5f, +0.5f},
-                  { +0.5f, +0.5f},
-                  { -0.5f, -0.5f},
-                  { +0.5f, -0.5f},
+                  { -0.5f, +0.5f },
+                  { +0.5f, +0.5f },
+                  { -0.5f, -0.5f },
+                  { +0.5f, -0.5f },
                 };
 
-
-                D3D11_BUFFER_DESC Descriptor = { sizeof(Coordinates),D3D11_USAGE_IMMUTABLE,D3D11_BIND_VERTEX_BUFFER };
-                // Descriptor.ByteWidth      = sizeof(Coordinates);
-                // Descriptor.Usage          = D3D11_USAGE_IMMUTABLE;
-                // Descriptor.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
-                // Descriptor.CPUAccessFlags = 0;
+                D3D11_BUFFER_DESC Descriptor
+                {
+                    sizeof(Coordinates),
+                    D3D11_USAGE_IMMUTABLE,
+                    D3D11_BIND_VERTEX_BUFFER
+                };
 
                 D3D11_SUBRESOURCE_DATA SubResource{ Coordinates };
 
@@ -96,17 +121,13 @@ namespace Pipeline
                 Buffer->Release();
             }
             {
-                D3D11_BUFFER_DESC Descriptor =
+                D3D11_BUFFER_DESC Descriptor
                 {
                     sizeof(float[4][2]),
                     D3D11_USAGE_DYNAMIC,
                     D3D11_BIND_VERTEX_BUFFER,
                     D3D11_CPU_ACCESS_WRITE
                 };
-                // Descriptor.ByteWidth      = sizeof(Coordinates);
-                // Descriptor.Usage          = D3D11_USAGE_IMMUTABLE;
-                // Descriptor.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
-                // Descriptor.CPUAccessFlags = 0;
 
                 MUST(Device->CreateBuffer(&Descriptor, nullptr, &Buffer::Vertex));
 
@@ -114,24 +135,37 @@ namespace Pipeline
                 const UINT Offset = 0;
 
                 DeviceContext->IASetVertexBuffers(1, 1, &Buffer::Vertex, &Stride, &Offset);
-
-
             }
             {
                 DeviceContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            }
+            {
+                D3D11_BUFFER_DESC Descriptor
+                {
+                    sizeof(float[4][4]),
+                    D3D11_USAGE_DYNAMIC,
+                    D3D11_BIND_CONSTANT_BUFFER,
+                    D3D11_CPU_ACCESS_WRITE
+                };
+
+                for (UINT8 i = 0; i < 3; ++i)
+                {
+                    MUST(Device->CreateBuffer(&Descriptor, nullptr, &Buffer::Constant[i]));
+                    DeviceContext->VSSetConstantBuffers(i, 1, &Buffer::Constant[i]);
+                }
             }
             {
 #include "Shader/Bytecode/Vertex.h"
                 {
                     D3D11_INPUT_ELEMENT_DESC Descriptor[2]
                     {
-                        {"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0},
-                        {"TEXTCOORD",0,DXGI_FORMAT_R32G32_FLOAT,1}
+                        { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0 },
+                        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 1 }
                     };
-
 
                     MUST(Device->CreateInputLayout(Descriptor, 2, ByteCode, sizeof(ByteCode), &InputLayout));
                     DeviceContext->IASetInputLayout(InputLayout);
+
                 }
                 {
                     MUST(Device->CreateVertexShader(ByteCode, sizeof(ByteCode), nullptr, &VertexShader));
@@ -146,10 +180,9 @@ namespace Pipeline
             {
                 FreeImage_Initialise();
                 {
-                    FIBITMAP* Bitmap = FreeImage_Load(FREE_IMAGE_FORMAT::FIF_PNG, "kerbi.png");
+                    FIBITMAP* Bitmap = FreeImage_Load(FREE_IMAGE_FORMAT::FIF_PNG, "Player.png");
                     {
                         FreeImage_FlipVertical(Bitmap);
-
 
                         D3D11_TEXTURE2D_DESC Descriptor = D3D11_TEXTURE2D_DESC();
                         Descriptor.Width = FreeImage_GetWidth(Bitmap);
@@ -218,55 +251,119 @@ namespace Pipeline
         }
         case WM_APP:
         {
-            D3D11_MAPPED_SUBRESOURCE SubResource = D3D11_MAPPED_SUBRESOURCE();
-
-            MUST(DeviceContext->Map(Buffer::Vertex, 0, D3D11_MAP_WRITE_DISCARD, 0, &SubResource));
+            MUST(SwapChain->Present(0, 0));
+            float Color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+            DeviceContext->ClearRenderTargetView(RenderTargetView, Color);
             {
                 static struct
                 {
-                    float const Width = 67;
-                    float const Height = 81;
+                    float const Width = 84;
+                    float const Height = 120;
                 }Frame;
 
                 static unsigned Count = 0;
-                static unsigned Motion = 8;
-                static unsigned FPM = 400;
+                static unsigned Motion = 12;
+                static unsigned FPM = 700;
 
                 float const Coordinates[4][2]
                 {
-                    {Frame.Width * (Count / FPM + 0), Frame.Height * 5 }, // 좌상단
-                    {Frame.Width * (Count / FPM + 1), Frame.Height * 5 }, // 우상단
-                    {Frame.Width * (Count / FPM + 0), Frame.Height * 6 }, // 좌하단
-                    {Frame.Width * (Count / FPM + 1), Frame.Height * 6 }  // 우하단
+                    { Frame.Width * (Count / FPM + 0), Frame.Height * 0 }, // 좌상단
+                    { Frame.Width * (Count / FPM + 1), Frame.Height * 0 }, // 우상단
+                    { Frame.Width * (Count / FPM + 0), Frame.Height * 1 }, // 좌하단
+                    { Frame.Width * (Count / FPM + 1), Frame.Height * 1 }  // 우하단
                 };
 
                 Count += 1;
 
                 if (FPM * Motion - 1 < Count) Count = 0;
 
-                memcpy_s(SubResource.pData, SubResource.RowPitch, Coordinates, sizeof(Coordinates));
+                Buffer::Update(Buffer::Vertex, Coordinates);
             }
-            DeviceContext->Unmap(Buffer::Vertex, 0);
+            {
+                {
+                    static float  Scale_W = 84;
+                    static float  Scale_H = 120;
 
-            MUST(SwapChain->Present(0, 0));
-            float Color[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-            DeviceContext->ClearRenderTargetView(RenderTargetView, Color);
+                    static float  Location_X = -100;
+                    static float  Location_Y = -100;
+
+                    if (Input::Get::Down('W')) Location_Y += 0.05f;
+                    if (Input::Get::Down('S')) Location_Y -= 0.05f;
+                    if (Input::Get::Down('A')) Location_X -= 0.05f;
+                    if (Input::Get::Down('D')) Location_X += 0.05f;
+
+
+                    float const Transform[4][4]
+                    {
+                           Scale_W,          0, 0, Location_X,
+                                 0,    Scale_H, 0, Location_Y,
+                                 0,          0, 1,          0,
+                                 0,          0, 0,          1
+                    };
+
+                    Buffer::Update(Buffer::Constant[0], Transform);
+                }
+                {
+                    static float X = 0.0f;
+
+                    // X -= 0.005f;
+
+                    float const Transform[4][4]
+                    {
+                        1, 0, 0, X,
+                        0, 1, 0, 0,
+                        0, 0, 1, 0,
+                        0, 0, 0, 1
+                    };
+                    Buffer::Update(Buffer::Constant[1], Transform);
+                }
+                {
+                    static float const X = 2.0f / 500.0f;
+                    static float const Y = 2.0f / 500.0f;
+
+                    float const Transform[4][4]
+                    {
+                        X, 0, 0, 0,
+                        0, Y, 0, 0,
+                        0, 0, 1, 0,
+                        0, 0, 0, 1
+                    };
+
+                    Buffer::Update(Buffer::Constant[2], Transform);
+                }
+            }
             DeviceContext->Draw(4, 0);
+            {
+                static float  Scale_W = 84 / 3;
+                static float  Scale_H = 120 / 3;
+
+                static float  Location_X = 100;
+                static float  Location_Y = 100;
+
+                float const Transform[4][4]
+                {
+                       Scale_W,          0, 0, Location_X,
+                             0,    Scale_H, 0, Location_Y,
+                             0,          0, 1,          0,
+                             0,          0, 0,          1
+                };
+
+                Buffer::Update(Buffer::Constant[0], Transform);
+            }
+            DeviceContext->Draw(4, 0);
+
             return 0;
         }
         case WM_DESTROY:
         {
-
             Buffer::Vertex->Release();
             InputLayout->Release();
-            PixelShader->Release();
-
             VertexShader->Release();
+            PixelShader->Release();
+            RenderTargetView->Release();
             Device->Release();
             DeviceContext->Release();
             SwapChain->Release();
-
-
 
             PostQuitMessage(0);
             return 0;

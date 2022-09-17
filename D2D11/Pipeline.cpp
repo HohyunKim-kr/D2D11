@@ -280,20 +280,19 @@ namespace Pipeline
                 Buffer::Update(Buffer::Vertex, Coordinates);
             }
             {
+
                 {
                     static float  Scale_W = 84;
                     static float  Scale_H = 120;
+                    static float  Location_X = 0;
+                    static float  Location_Y = 0;
 
-                    static float  Location_X = -100;
-                    static float  Location_Y = -100;
+                    if (Input::Get::Down('W')) Location_Y += 0.1f;
+                    if (Input::Get::Down('S')) Location_Y -= 0.1f;
+                    if (Input::Get::Down('A')) Location_X -= 0.1f;
+                    if (Input::Get::Down('D')) Location_X += 0.1f;
 
-                    if (Input::Get::Down('W')) Location_Y += 0.05f;
-                    if (Input::Get::Down('S')) Location_Y -= 0.05f;
-                    if (Input::Get::Down('A')) Location_X -= 0.05f;
-                    if (Input::Get::Down('D')) Location_X += 0.05f;
-
-
-                    float const Transform[4][4]
+                    float const World[4][4]
                     {
                            Scale_W,          0, 0, Location_X,
                                  0,    Scale_H, 0, Location_Y,
@@ -301,21 +300,16 @@ namespace Pipeline
                                  0,          0, 0,          1
                     };
 
-                    Buffer::Update(Buffer::Constant[0], Transform);
-                }
-                {
-                    static float X = 0.0f;
-
-                    // X -= 0.005f;
-
-                    float const Transform[4][4]
+                    float const View[4][4]
                     {
-                        1, 0, 0, X,
-                        0, 1, 0, 0,
+                        1, 0, 0, Location_X * -1,
+                        0, 1, 0, Location_Y * -1,
                         0, 0, 1, 0,
                         0, 0, 0, 1
                     };
-                    Buffer::Update(Buffer::Constant[1], Transform);
+
+                    Buffer::Update(Buffer::Constant[0], World);
+                    Buffer::Update(Buffer::Constant[1], View);
                 }
                 {
                     static float const X = 2.0f / 500.0f;
